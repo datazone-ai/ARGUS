@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+/* ── Theme tokens ─────────────────────────────────────────── */
+:root {
+  --bg-base:        #0a0d14;
+  --bg-surface:     #0f1520;
+  --bg-input:       #0d1117;
+  --border:         #1e2840;
+  --border-strong:  #2d3f60;
+  --overlay-subtle: rgba(255, 255, 255, 0.05);
+  --overlay-mild:   rgba(255, 255, 255, 0.10);
+  --overlay-dark:   rgba(0, 0, 0, 0.20);
+}
+
+html.light {
+  --bg-base:        #f0f4f8;
+  --bg-surface:     #ffffff;
+  --bg-input:       #f8fafc;
+  --border:         #e2e8f0;
+  --border-strong:  #cbd5e1;
+  --overlay-subtle: rgba(0, 0, 0, 0.05);
+  --overlay-mild:   rgba(0, 0, 0, 0.09);
+  --overlay-dark:   rgba(0, 0, 0, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Light-mode text overrides ────────────────────────────── */
+html.light .text-white   { color: #0f172a; }
+html.light .text-slate-200 { color: #1e293b; }
+html.light .text-slate-300 { color: #334155; }
+html.light .text-slate-400 { color: #475569; }
+html.light .text-slate-500 { color: #64748b; }
+html.light .text-slate-600 { color: #94a3b8; }
+
+/* Alert/info panel backgrounds in light mode */
+html.light .bg-blue-950\/40 { background-color: #eff6ff !important; }
+html.light .bg-red-950\/30  { background-color: #fff1f2 !important; }
+
+/* Alert/info panel borders in light mode */
+html.light .border-blue-500\/20 { border-color: #bfdbfe !important; }
+html.light .border-red-500\/20  { border-color: #fecaca !important; }
+
+/* Section dividers (border-white/5 is invisible on light bg) */
+html.light .border-white\/5 { border-color: var(--border) !important; }
+
+/* Coloured text — boost contrast for light backgrounds */
+html.light .text-blue-400   { color: #1d4ed8 !important; }
+html.light .text-red-400    { color: #b91c1c !important; }
+html.light .text-orange-400 { color: #c2410c !important; }
+html.light .text-amber-400  { color: #b45309 !important; }
+html.light .text-emerald-400 { color: #047857 !important; }
+html.light .text-violet-400  { color: #6d28d9 !important; }
+html.light .text-cyan-400    { color: #0e7490 !important; }
+
+/* Keep white text on solid-colour buttons and badges (same element) */
+html.light [class*="bg-blue-6"].text-white,
+html.light [class*="bg-blue-5"].text-white,
+html.light [class*="bg-red-5"].text-white,
+html.light [class*="bg-orange-5"].text-white,
+html.light [class*="bg-amber-5"].text-white,
+html.light [class*="bg-emerald-5"].text-white,
+html.light [class*="bg-violet-6"].text-white { color: white !important; }
+
+/* Keep white text inside gradient/coloured containers (e.g. logo) */
+html.light [class*="bg-blue-5"] .text-white,
+html.light [class*="bg-blue-6"] .text-white,
+html.light [class*="from-blue"] .text-white,
+html.light [class*="bg-gradient"] .text-white { color: white !important; }
+
+/* ── Scrollbar ────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: var(--bg-surface); }
+::-webkit-scrollbar-thumb  { background: var(--border-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #4a5568; }
+
+/* ── Recharts ─────────────────────────────────────────────── */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+}
+
+html.light .recharts-cartesian-grid line { stroke: #e2e8f0 !important; }
+html.light .recharts-polar-grid-concentric-polygon,
+html.light .recharts-polar-grid line { stroke: #e2e8f0 !important; }
