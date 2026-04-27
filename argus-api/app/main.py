@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import assets, alerts, sensors, maintenance, predictions, work_orders, chat, production
 from app.db.database import SessionLocal, apply_migrations, engine
 from app.models.tables import Base
-from app.db.seed import seed_production
+from app.db.seed import run_seed, seed_production
+from sqlalchemy import text
 
 _raw_origins = os.getenv(
     "ALLOWED_ORIGINS",
@@ -43,6 +44,9 @@ def on_startup():
     apply_migrations()
     db = SessionLocal()
     try:
+        asset_count = db.execute(text("SELECT COUNT(*) FROM assets")).fetchone()[0]
+        if asset_count == 0:
+            run_seed(db)
         seed_production(db)
     finally:
         db.close()
