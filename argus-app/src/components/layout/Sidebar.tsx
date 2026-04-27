@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Layers, Bell, Activity, Heart,
-  ClipboardList, Settings, Cpu, ChevronRight, Sparkles, Droplets, LogOut
+  ClipboardList, Settings, Cpu, ChevronRight, ChevronLeft, Sparkles, Droplets, LogOut
 } from 'lucide-react'
 import { useAlerts } from '../../context/AlertsContext'
 import { useIntelligence } from '../../context/IntelligenceContext'
 import { useAuth } from '../../context/AuthContext'
+import { useLayout } from '../../context/LayoutContext'
 
 const managerNav = [
   { to: '/',                icon: LayoutDashboard, label: 'Overview',          exact: true,  alertBadge: false },
@@ -32,6 +33,7 @@ export default function Sidebar() {
   const { getOpenAlerts } = useAlerts()
   const { isOpen: aiOpen, toggle: toggleAI } = useIntelligence()
   const { user, logout, isEngineer } = useAuth()
+  const { sidebarExpanded, toggleSidebar } = useLayout()
   const openAlerts = getOpenAlerts()
   const navItems = isEngineer ? engineerNav : managerNav
   const openTotal = openAlerts.length
@@ -41,15 +43,19 @@ export default function Sidebar() {
     .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() ?? 'OM'
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-16 hover:w-56 group transition-all duration-200 ease-in-out bg-[var(--bg-surface)] border-r border-[var(--border)] z-40 flex flex-col overflow-hidden">
-      {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-[var(--border)] min-h-[64px]">
+    <aside className={`fixed left-0 top-0 h-screen ${sidebarExpanded ? 'w-56' : 'w-16'} transition-all duration-200 ease-in-out bg-[var(--bg-surface)] border-r border-[var(--border)] z-40 flex flex-col overflow-hidden`}>
+      {/* Logo + collapse toggle */}
+      <div
+        onClick={toggleSidebar}
+        className="flex items-center gap-3 px-4 py-5 border-b border-[var(--border)] min-h-[64px] cursor-pointer hover:bg-[var(--overlay-subtle)] transition-colors"
+      >
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center flex-shrink-0">
           <span className="text-white font-bold text-xs">AR</span>
         </div>
-        <span className="text-white font-bold text-sm whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+        <span className={`text-white font-bold text-sm whitespace-nowrap transition-opacity duration-150 flex-1 ${sidebarExpanded ? 'opacity-100' : 'opacity-0'}`}>
           ARGUS
         </span>
+        {sidebarExpanded && <ChevronLeft size={14} className="text-slate-400 flex-shrink-0" />}
       </div>
 
       {/* Nav */}
@@ -77,11 +83,11 @@ export default function Sidebar() {
                     </span>
                   )}
                 </div>
-                <span className="whitespace-nowrap text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                <span className={`whitespace-nowrap text-sm font-medium transition-opacity duration-150 ${sidebarExpanded ? 'opacity-100' : 'opacity-0'}`}>
                   {label}
                 </span>
-                {isActive && (
-                  <ChevronRight size={12} className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+                {isActive && sidebarExpanded && (
+                  <ChevronRight size={12} className="ml-auto" />
                 )}
               </>
             )}
@@ -105,7 +111,7 @@ export default function Sidebar() {
             <Sparkles size={18} />
             {aiOpen && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-violet-400" />}
           </div>
-          <span className="whitespace-nowrap text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <span className={`whitespace-nowrap text-sm font-medium transition-opacity duration-150 ${sidebarExpanded ? 'opacity-100' : 'opacity-0'}`}>
             AI Assistant
           </span>
         </button>
@@ -115,14 +121,14 @@ export default function Sidebar() {
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-600 to-slate-500 flex items-center justify-center flex-shrink-0">
             <span className="text-white text-xs font-bold">{initials}</span>
           </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 min-w-0 flex-1">
+          <div className={`transition-opacity duration-150 min-w-0 flex-1 ${sidebarExpanded ? 'opacity-100' : 'opacity-0'}`}>
             <p className="text-xs font-medium text-slate-200 truncate">{user?.name ?? 'Ops Manager'}</p>
             <p className="text-[10px] text-slate-500 truncate">Bonny Terminal</p>
           </div>
           <button
             onClick={logout}
             title="Sign out"
-            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-slate-300 flex-shrink-0"
+            className={`transition-opacity text-slate-600 hover:text-slate-300 flex-shrink-0 ${sidebarExpanded ? 'opacity-100' : 'opacity-0'}`}
           >
             <LogOut size={13} />
           </button>
