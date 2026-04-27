@@ -1,0 +1,12 @@
+argus-api/venv/
+argus-api/__pycache__/
+argus-api/**/__pycache__/
+argus-api/**/*.pyc
+argus-api/.env
+
+argus-app/node_modules/
+argus-app/dist/
+argus-app/.env
+argus-app/.env.local
+
+.DS_Store

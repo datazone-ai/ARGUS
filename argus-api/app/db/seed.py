@@ -253,6 +253,35 @@ def run_seed(db: Session):
             """), {"time": t, "asset_id": a["id"], "health_score": score})
 
     db.commit()
+
+    print("Generating alerts from sensor data...")
+    from app.services.alert_engine import run_all_checkers
+    alerts = run_all_checkers(db)
+    inserted = 0
+    for alert in alerts:
+        existing = db.execute(
+            text("SELECT id FROM alerts WHERE id = :id"), {"id": alert["id"]}
+        ).fetchone()
+        if not existing:
+            db.execute(text("""
+                INSERT INTO alerts (
+                    id, asset_id, asset_name, linked_well, severity, type,
+                    title, observation, pattern_match, recommended_action,
+                    risk_if_ignored, confidence_score, time_to_failure_min,
+                    time_to_failure_max, predicted_impact_bopd, financial_impact_usd,
+                    triggered_at, status, sensors
+                ) VALUES (
+                    :id, :asset_id, :asset_name, :linked_well, :severity, :type,
+                    :title, :observation, :pattern_match, :recommended_action,
+                    :risk_if_ignored, :confidence_score, :time_to_failure_min,
+                    :time_to_failure_max, :predicted_impact_bopd, :financial_impact_usd,
+                    :triggered_at, :status, :sensors
+                )
+            """), {**alert, "sensors": alert.get("sensors", [])})
+            inserted += 1
+    db.commit()
+    print(f"Alerts seeded: {inserted}")
+
     print("Seed complete.")
 
 
