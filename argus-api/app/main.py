@@ -3,7 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import assets, alerts, sensors, maintenance, predictions, work_orders, chat, production
-from app.db.database import SessionLocal, apply_migrations
+from app.db.database import SessionLocal, apply_migrations, engine
+from app.models.tables import Base
 from app.db.seed import seed_production
 
 _raw_origins = os.getenv(
@@ -38,6 +39,7 @@ app.include_router(production.router)
 
 @app.on_event("startup")
 def on_startup():
+    Base.metadata.create_all(bind=engine)
     apply_migrations()
     db = SessionLocal()
     try:
