@@ -18,12 +18,15 @@ const trendData = Array.from({ length: 30 }, (_, i) => ({
 
 export default function Alerts() {
   const [severityFilter, setSeverityFilter] = useState<AlertSeverity | 'all'>('all')
+  const [view, setView] = useState<'open' | 'all'>('open')
   const { getOpenAlerts, getAlerts } = useAlerts()
 
   const open = getOpenAlerts()
+  const all = getAlerts()
+  const base = view === 'open' ? open : all
   const totalExposure = open.reduce((s, a) => s + a.financialImpactUsd, 0)
 
-  const filtered = open
+  const filtered = base
     .filter(a => severityFilter === 'all' || a.severity === severityFilter)
     .sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity))
 
@@ -61,7 +64,20 @@ export default function Alerts() {
           {/* Alerts list */}
           <div className="col-span-12 lg:col-span-8 space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-slate-400 text-xs">{filtered.length} alert{filtered.length !== 1 ? 's' : ''} shown</p>
+              <div className="flex items-center gap-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded-lg p-1">
+                <button
+                  onClick={() => setView('open')}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${view === 'open' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-300'}`}
+                >
+                  Open ({open.length})
+                </button>
+                <button
+                  onClick={() => setView('all')}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${view === 'all' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-300'}`}
+                >
+                  All ({all.length})
+                </button>
+              </div>
               {severityFilter !== 'all' && (
                 <button onClick={() => setSeverityFilter('all')} className="text-blue-400 text-xs hover:text-blue-300">Clear filter</button>
               )}

@@ -1,5 +1,5 @@
 import type { Alert } from '../../types'
-import { AlertTriangle, Clock, DollarSign, TrendingDown, Zap, ChevronDown, ChevronUp, BellOff, CheckCircle2, Cpu } from 'lucide-react'
+import { AlertTriangle, Clock, DollarSign, TrendingDown, Zap, ChevronDown, ChevronUp, BellOff, CheckCircle2, Cpu, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 import { formatDistance } from 'date-fns'
 
@@ -22,10 +22,12 @@ interface AlertCardProps {
 
 export default function AlertCard({ alert, compact = false }: AlertCardProps) {
   const [expanded, setExpanded] = useState(!compact)
-  const { dismiss, snooze } = useAlerts()
+  const { dismiss, snooze, reopen, getStatus } = useAlerts()
   const { openFromAlert } = useWorkOrders()
   const toast = useToast()
   const cfg = severityConfig[alert.severity]
+  const status = getStatus(alert.id)
+  const isOpen = status === 'open'
 
   const handleDismiss = () => {
     dismiss(alert.id)
@@ -35,6 +37,11 @@ export default function AlertCard({ alert, compact = false }: AlertCardProps) {
   const handleSnooze = () => {
     snooze(alert.id)
     toast.warning(`Alert snoozed 24h: ${alert.assetName}`)
+  }
+
+  const handleReopen = () => {
+    reopen(alert.id)
+    toast.success(`Alert reopened: ${alert.assetName}`)
   }
 
   const handleCreateWO = () => {
@@ -107,7 +114,7 @@ export default function AlertCard({ alert, compact = false }: AlertCardProps) {
 
       {/* Expanded body */}
       {expanded && (
-        <div className="border-t border-white/5 px-4 py-3 space-y-3">
+        <div className={`border-t border-white/5 px-4 py-3 space-y-3 ${!isOpen ? 'opacity-60' : ''}`}>
           <div>
             <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Observation</p>
             <p className="text-slate-300 text-xs leading-relaxed">{alert.observation}</p>
@@ -129,30 +136,44 @@ export default function AlertCard({ alert, compact = false }: AlertCardProps) {
 
           {/* Actions */}
           <div className="flex items-center gap-2 pt-1 flex-wrap">
-            <button
-              onClick={handleCreateWO}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
-            >
-              <Cpu size={12} /> Create Work Order
-            </button>
-            <button
-              onClick={handleCreateCase}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--overlay-subtle)] hover:bg-[var(--overlay-mild)] text-slate-300 text-xs font-medium transition-colors"
-            >
-              <CheckCircle2 size={12} /> Create Case
-            </button>
-            <button
-              onClick={handleSnooze}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--overlay-subtle)] hover:bg-[var(--overlay-mild)] text-slate-300 text-xs font-medium transition-colors"
-            >
-              <BellOff size={12} /> Snooze 24h
-            </button>
-            <button
-              onClick={handleDismiss}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--overlay-subtle)] hover:bg-[var(--overlay-mild)] text-slate-400 text-xs font-medium transition-colors ml-auto"
-            >
-              <CheckCircle2 size={12} /> Dismiss
-            </button>
+            {isOpen ? (
+              <>
+                <button
+                  onClick={handleCreateWO}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
+                >
+                  <Cpu size={12} /> Create Work Order
+                </button>
+                <button
+                  onClick={handleCreateCase}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--overlay-subtle)] hover:bg-[var(--overlay-mild)] text-slate-300 text-xs font-medium transition-colors"
+                >
+                  <CheckCircle2 size={12} /> Create Case
+                </button>
+                <button
+                  onClick={handleSnooze}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--overlay-subtle)] hover:bg-[var(--overlay-mild)] text-slate-300 text-xs font-medium transition-colors"
+                >
+                  <BellOff size={12} /> Snooze 24h
+                </button>
+                <button
+                  onClick={handleDismiss}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--overlay-subtle)] hover:bg-[var(--overlay-mild)] text-slate-400 text-xs font-medium transition-colors ml-auto"
+                >
+                  <CheckCircle2 size={12} /> Dismiss
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-slate-500 capitalize">{status}</span>
+                <button
+                  onClick={handleReopen}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 text-xs font-medium transition-colors border border-emerald-500/30 ml-auto"
+                >
+                  <RotateCcw size={12} /> Reopen
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

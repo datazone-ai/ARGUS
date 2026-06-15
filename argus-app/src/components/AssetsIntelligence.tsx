@@ -9,7 +9,6 @@ import { useAlerts } from '../context/AlertsContext'
 import { useAssets } from '../context/AssetsContext'
 import { useWorkOrders } from '../context/WorkOrderContext'
 import { useToast } from './Toast'
-import { mockAsk } from '../services/mockIntelligence'
 import { api } from '../services/api'
 import type {
   ChatMessage, AIResponse, Section, CasePreview, WorkOrderPreview,
@@ -36,6 +35,16 @@ function Badge({ text, color = 'slate' }: { text: string; color?: string }) {
 }
 
 // ── Section renderer ──────────────────────────────────────────────
+function renderInline(text: string): React.ReactNode {
+  const parts = text.split(/\*\*(.*?)\*\*/g)
+  if (parts.length === 1) return text
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <strong key={i} className="text-white font-semibold">{part}</strong>
+      : part
+  )
+}
+
 function SectionRenderer({ section, preview, setPreview }: {
   section: Section
   preview: PreviewState | null
@@ -47,14 +56,14 @@ function SectionRenderer({ section, preview, setPreview }: {
     case 'h3':
       return <h3 className="text-white font-semibold text-xs mt-2">{section.text}</h3>
     case 'p':
-      return <p className="text-slate-300 text-xs leading-relaxed">{section.text}</p>
+      return <p className="text-slate-300 text-xs leading-relaxed">{renderInline(section.text)}</p>
     case 'ul':
       return (
         <ul className="space-y-1">
           {section.items.map((item, i) => (
             <li key={i} className="text-slate-300 text-xs flex items-start gap-1.5 leading-relaxed">
               <span className="text-slate-600 mt-0.5 flex-shrink-0">•</span>
-              {item}
+              <span>{renderInline(item)}</span>
             </li>
           ))}
         </ul>
@@ -502,6 +511,78 @@ function ChatHistoryPanel({ conversations, activeId, onSelect, onNew }: {
   )
 }
 
+// ── GPT response → structured sections ───────────────────────────
+const TOOL_SOURCE_MAP: Record<string, ChatSource['type']> = {
+  get_open_alerts:       'alert',
+  get_asset_status:      'asset',
+  get_sensor_history:    'sensor',
+  get_sensor_list:       'sensor',
+  get_maintenance_history: 'maintenance',
+  get_rul_estimates:     'asset',
+  get_financial_exposure: 'alert',
+  get_work_orders:       'workOrder',
+  compare_assets:        'asset',
+  get_health_trend:      'asset',
+}
+
+function parseTextToAIResponse(text: string, toolsUsed: string[]): AIResponse {
+  const lines = text.split('\n')
+  const sections: Section[] = []
+  let ulBuffer: string[] = []
+
+  const flushUl = () => {
+    if (ulBuffer.length) { sections.push({ type: 'ul', items: [...ulBuffer] }); ulBuffer = [] }
+  }
+
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) { flushUl(); continue }
+
+    // Numbered list item: "1. **Asset Name**" → h3 heading
+    const numbered = line.match(/^\d+\.\s+(.+)$/)
+    if (numbered) {
+      flushUl()
+      const inner = numbered[1].replace(/\*\*/g, '').trim()
+      sections.push({ type: 'h3', text: inner })
+      continue
+    }
+
+    // Bullet (including indented): "- text" or "• text"
+    if (/^[-•*]\s+/.test(line)) {
+      ulBuffer.push(line.replace(/^[-•*]\s+/, '').trim())
+      continue
+    }
+
+    flushUl()
+
+    if (line.startsWith('## '))           { sections.push({ type: 'h2', text: line.slice(3) }); continue }
+    if (line.startsWith('# '))            { sections.push({ type: 'h2', text: line.slice(2) }); continue }
+    if (/^\*\*(.+)\*\*[:\s]*$/.test(line)) { sections.push({ type: 'h3', text: line.replace(/\*\*/g, '').replace(/:$/, '').trim() }); continue }
+
+    sections.push({ type: 'p', text: line })
+  }
+  flushUl()
+
+  const seenTypes = new Set<string>()
+  const sources: ChatSource[] = toolsUsed
+    .filter(t => { if (seenTypes.has(t)) return false; seenTypes.add(t); return true })
+    .map(t => ({
+      type: TOOL_SOURCE_MAP[t] ?? 'asset',
+      label: t.replace(/_/g, ' ').replace(/^get /, ''),
+      count: 1,
+    }))
+
+  return {
+    sections: sections.length ? sections : [{ type: 'p', text: text }],
+    sources,
+    confidence: 'high',
+    missingInfo: [],
+    reasoning: '',
+    suggestedFollowUps: [],
+    thinkingLabels: [],
+  }
+}
+
 // ── Suggested questions ───────────────────────────────────────────
 const SUGGESTED_QUESTIONS = [
   'Which assets require attention today?',
@@ -584,32 +665,30 @@ export default function AssetsIntelligence() {
     appendMessage(userMsg)
     setInput('')
 
-    const systemContext = {
-      alerts: getOpenAlerts(),
-      workOrders,
-      assets,
+    const chatContext = {
+      currentPage: window.location.pathname.split('/').pop() ?? 'overview',
     }
 
-    // Detect thinking labels first (before async call)
-    const tempIntent = trimmed.toLowerCase()
-    const labels = tempIntent.includes('case') ? ['Retrieving asset record', 'Reviewing relevant alerts', 'Gathering supporting evidence', 'Preparing case preview']
-      : tempIntent.includes('work order') ? ['Retrieving asset record', 'Checking maintenance schedule', 'Reviewing work order history', 'Preparing work order preview']
-      : tempIntent.includes('attention') ? ['Reviewing asset health scores', 'Checking active alert queue', 'Assessing maintenance schedules', 'Ranking by operational risk']
-      : ['Reviewing available system data', 'Checking alerts and assets', 'Reviewing maintenance records', 'Preparing response']
+    const history = (conv?.messages ?? [])
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-    // Run thinking animation concurrently with service call
-    const [response] = await Promise.all([
-      mockAsk(trimmed, systemContext),
+    const labels = ['Querying live data', 'Running analysis', 'Reviewing findings', 'Preparing response']
+
+    const [apiResult] = await Promise.all([
+      api.chat([...history, { role: 'user', content: trimmed }], chatContext),
       runThinking(labels),
     ])
 
     setIsThinking(false)
     setThinkingSteps([])
 
+    const response = parseTextToAIResponse(apiResult.response, apiResult.tools_used)
+
     const assistantMsg: ChatMessage = {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
-      content: response.sections.find(s => s.type === 'p')?.['text'] ?? 'Response ready',
+      content: apiResult.response,
       response,
       timestamp: new Date().toISOString(),
     }

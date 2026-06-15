@@ -1,6 +1,6 @@
 import type { Asset, Alert, MaintenanceRecord, Sensor, SensorReading } from '../types'
 
-const BASE = 'http://localhost:8000'
+const BASE = 'http://localhost:8001'
 
 function raw<T>(path: string): Promise<T> {
   return fetch(`${BASE}${path}`).then(r => {

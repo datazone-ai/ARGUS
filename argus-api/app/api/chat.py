@@ -3,16 +3,32 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException
+from openai import AzureOpenAI
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db.database import get_db
 
+load_dotenv()
+
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 ANCHOR = datetime(2024, 12, 31, 23, 0, 0)
+
+_client: Optional[AzureOpenAI] = None
+
+def get_client() -> AzureOpenAI:
+    global _client
+    if _client is None:
+        _client = AzureOpenAI(
+            api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            api_version=os.environ["AZURE_OPENAI_API_VERSION"],
+        )
+    return _client
 
 
 # ── Request/Response schemas ──────────────────────────────────────────────────
@@ -31,154 +47,190 @@ class ChatRequest(BaseModel):
     context: Optional[ChatContext] = None
 
 
-# ── Tool definitions ──────────────────────────────────────────────────────────
+# ── Tool definitions (OpenAI format) ─────────────────────────────────────────
 
 TOOLS = [
     {
-        "name": "get_open_alerts",
-        "description": (
-            "Get currently open alerts, optionally filtered by severity or asset. "
-            "Returns alert details including observation, recommended action, financial impact, "
-            "and time-to-failure range. Use for questions about current risks, critical issues, "
-            "or financial exposure."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "severity": {
-                    "type": "string",
-                    "enum": ["critical", "high", "medium", "low"],
-                    "description": "Filter by alert severity"
+        "type": "function",
+        "function": {
+            "name": "get_open_alerts",
+            "description": (
+                "Get currently open alerts, optionally filtered by severity or asset. "
+                "Returns alert details including observation, recommended action, financial impact, "
+                "and time-to-failure range. Use for questions about current risks, critical issues, "
+                "or financial exposure."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low"],
+                        "description": "Filter by alert severity"
+                    },
+                    "asset_id": {
+                        "type": "string",
+                        "description": "Filter by specific asset ID (e.g. COMP-A, GT-A, ESP-03)"
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_asset_status",
+            "description": (
+                "Get health score, status, sensor readings, and metadata for one or all assets. "
+                "Use for questions about asset condition, health scores, or comparing assets."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_id": {
+                        "type": "string",
+                        "description": "Specific asset ID. Leave empty to get all assets."
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_sensor_history",
+            "description": (
+                "Get recent sensor readings for a specific sensor. Use for trend questions, "
+                "vibration history, temperature trends, or pressure analysis. "
+                "Returns hourly averages to keep response size manageable."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string"},
+                    "sensor_id": {"type": "string", "description": "Full sensor ID e.g. COMP-A-VIB-NDE"},
+                    "hours": {"type": "integer", "description": "Hours of history (default 168 = 7 days)"}
                 },
-                "asset_id": {
-                    "type": "string",
-                    "description": "Filter by specific asset ID (e.g. COMP-A, GT-A, ESP-03)"
+                "required": ["asset_id", "sensor_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_maintenance_history",
+            "description": (
+                "Get maintenance records for an asset, optionally filtered by year or type. "
+                "Use for questions about past inspections, outcomes, findings, and next due dates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string"},
+                    "year": {"type": "integer"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["preventive", "corrective", "inspection", "overhaul"]
+                    }
                 }
             }
         }
     },
     {
-        "name": "get_asset_status",
-        "description": (
-            "Get health score, status, sensor readings, and metadata for one or all assets. "
-            "Use for questions about asset condition, health scores, or comparing assets."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "asset_id": {
-                    "type": "string",
-                    "description": "Specific asset ID. Leave empty to get all assets."
+        "type": "function",
+        "function": {
+            "name": "get_rul_estimates",
+            "description": (
+                "Get Remaining Useful Life (RUL) estimates for all assets or a specific one. "
+                "Returns health score, degradation rate (pts/day), and min/max days to failure. "
+                "Use for questions about when assets might fail or how urgent maintenance is."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string"}
                 }
             }
         }
     },
     {
-        "name": "get_sensor_history",
-        "description": (
-            "Get recent sensor readings for a specific sensor. Use for trend questions, "
-            "vibration history, temperature trends, or pressure analysis. "
-            "Returns hourly averages to keep response size manageable."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "asset_id": {"type": "string"},
-                "sensor_id": {"type": "string", "description": "Full sensor ID e.g. COMP-A-VIB-NDE"},
-                "hours": {"type": "integer", "default": 168, "description": "Hours of history (default 7 days)"}
-            },
-            "required": ["asset_id", "sensor_id"]
+        "type": "function",
+        "function": {
+            "name": "get_financial_exposure",
+            "description": (
+                "Get total financial exposure from open alerts, broken down by asset. "
+                "Use for questions about cost of risk, deferred production value, or prioritisation by financial impact."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
         }
     },
     {
-        "name": "get_maintenance_history",
-        "description": (
-            "Get maintenance records for an asset, optionally filtered by year or type. "
-            "Use for questions about past inspections, outcomes, findings, and next due dates."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "asset_id": {"type": "string"},
-                "year": {"type": "integer"},
-                "type": {
-                    "type": "string",
-                    "enum": ["preventive", "corrective", "inspection", "overhaul"]
+        "type": "function",
+        "function": {
+            "name": "get_work_orders",
+            "description": (
+                "Get work orders and cases, optionally filtered by status or asset. "
+                "Use for questions about ongoing maintenance actions, who is assigned, and target dates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["confirmed", "in_progress", "completed", "cancelled"]},
+                    "asset_id": {"type": "string"}
                 }
             }
         }
     },
     {
-        "name": "get_rul_estimates",
-        "description": (
-            "Get Remaining Useful Life (RUL) estimates for all assets or a specific one. "
-            "Returns health score, degradation rate (pts/day), and min/max days to failure. "
-            "Use for questions about when assets might fail or how urgent maintenance is."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "asset_id": {"type": "string"}
+        "type": "function",
+        "function": {
+            "name": "get_sensor_list",
+            "description": (
+                "List all sensors on an asset with their current values, baseline, alarm limits, and status. "
+                "Use to discover sensor IDs before calling get_sensor_history, or to get a snapshot of all sensor states."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string"}
+                },
+                "required": ["asset_id"]
             }
         }
     },
     {
-        "name": "get_financial_exposure",
-        "description": (
-            "Get total financial exposure from open alerts, broken down by asset. "
-            "Use for questions about cost of risk, deferred production value, or prioritisation by financial impact."
-        ),
-        "input_schema": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "get_work_orders",
-        "description": (
-            "Get work orders and cases, optionally filtered by status or asset. "
-            "Use for questions about ongoing maintenance actions, who is assigned, and target dates."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "enum": ["confirmed", "in_progress", "completed", "cancelled"]},
-                "asset_id": {"type": "string"}
+        "type": "function",
+        "function": {
+            "name": "compare_assets",
+            "description": (
+                "Compare health scores, degradation rates, and open alert counts across all assets. "
+                "Use for ranking questions: 'which assets are worst', 'sort by urgency', etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {}
             }
         }
     },
     {
-        "name": "get_sensor_list",
-        "description": (
-            "List all sensors on an asset with their current values, baseline, alarm limits, and status. "
-            "Use to discover sensor IDs before calling get_sensor_history, or to get a snapshot of all sensor states."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "asset_id": {"type": "string"}
-            },
-            "required": ["asset_id"]
-        }
-    },
-    {
-        "name": "compare_assets",
-        "description": (
-            "Compare health scores, degradation rates, and open alert counts across all assets. "
-            "Use for ranking questions: 'which assets are worst', 'sort by urgency', etc."
-        ),
-        "input_schema": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "get_health_trend",
-        "description": (
-            "Get daily health score history for an asset over the last N days. "
-            "Use for questions about whether an asset is improving or declining over time."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "asset_id": {"type": "string"},
-                "days": {"type": "integer", "default": 14}
-            },
-            "required": ["asset_id"]
+        "type": "function",
+        "function": {
+            "name": "get_health_trend",
+            "description": (
+                "Get daily health score history for an asset over the last N days. "
+                "Use for questions about whether an asset is improving or declining over time."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string"},
+                    "days": {"type": "integer", "description": "Number of days (default 14)"}
+                },
+                "required": ["asset_id"]
+            }
         }
     }
 ]
@@ -404,10 +456,9 @@ class ToolExecutor:
         return json.dumps({"asset_id": asset_id, "trend_direction": direction, "snapshots": snapshots})
 
 
-# ── System prompt builder ─────────────────────────────────────────────────────
+# ── System prompt ─────────────────────────────────────────────────────────────
 
 def build_system_prompt(context: Optional[ChatContext], db: Session) -> str:
-    # Get a quick summary for context injection
     try:
         alert_count = db.execute(text("SELECT COUNT(*) FROM alerts WHERE status='open'")).fetchone()[0]
         critical_count = db.execute(text("SELECT COUNT(*) FROM alerts WHERE status='open' AND severity='critical'")).fetchone()[0]
@@ -423,7 +474,6 @@ def build_system_prompt(context: Optional[ChatContext], db: Session) -> str:
             ctx_lines.append(f"- User is currently viewing asset: {context.currentAssetName} ({context.currentAssetId})")
         elif context.currentPage:
             ctx_lines.append(f"- User is on page: {context.currentPage}")
-
     ctx_block = "\n".join(ctx_lines) if ctx_lines else "- Dashboard overview"
 
     return f"""You are Assets Intelligence, an AI assistant embedded in the ARGUS predictive maintenance platform
@@ -455,133 +505,55 @@ BEHAVIOUR:
 - Be direct. Operations managers don't have time for hedging."""
 
 
-# ── Mock response engine (no API credits required) ────────────────────────────
+# ── GPT-4o tool-use loop ──────────────────────────────────────────────────────
 
-def _fmt_millions(v: float) -> str:
-    return f"${v/1_000_000:.1f}M"
+def run_chat(messages: List[Dict], system_prompt: str, executor: ToolExecutor) -> tuple[str, List[str]]:
+    client = get_client()
+    deployment = os.environ["AZURE_OPENAI_DEPLOYMENT"]
+    tools_used: List[str] = []
 
-def _severity_icon(s: str) -> str:
-    return {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(s, "⚪")
+    api_messages = [{"role": "system", "content": system_prompt}] + messages
 
-def mock_respond(query: str, executor: ToolExecutor) -> tuple[str, List[str]]:
-    q = query.lower()
-
-    # ── Intent: financial exposure / cost of risk
-    if any(w in q for w in ["financial", "exposure", "cost", "million", "dollar", "$", "money", "impact"]):
-        raw = json.loads(executor.execute("get_financial_exposure", {}))
-        alerts_raw = json.loads(executor.execute("get_open_alerts", {}))
-        total = raw["total_exposure_usd"]
-        lines = [
-            f"**Total financial exposure from open alerts: {_fmt_millions(total)}**\n",
-            "Breakdown by asset:\n",
-        ]
-        for a in raw["by_asset"][:6]:
-            lines.append(f"• **{a['asset_name']}** — {_fmt_millions(a['exposure'])} across {a['alert_count']} alert(s), {a['bopd']:.0f} BOPD at risk")
-        lines.append(f"\nTotal open alerts: {alerts_raw['open_alert_count']}. Prioritise assets at top of this list for immediate work-order action.")
-        return "\n".join(lines), ["get_financial_exposure", "get_open_alerts"]
-
-    # ── Intent: open alerts / current risks
-    if any(w in q for w in ["alert", "risk", "critical", "warning", "open", "issue", "problem", "danger"]):
-        raw = json.loads(executor.execute("get_open_alerts", {}))
-        alerts = raw["alerts"][:6]
-        lines = [
-            f"**{raw['open_alert_count']} open alerts** · total exposure {_fmt_millions(raw['total_financial_exposure_usd'])}\n"
-        ]
-        for a in alerts:
-            icon = _severity_icon(a["severity"])
-            ttf = f"{a.get('time_to_failure_min','?')}–{a.get('time_to_failure_max','?')} days"
-            lines.append(
-                f"{icon} **{a['asset_name']}** [{a['severity'].upper()}] — {a['title']}\n"
-                f"   Confidence: {a.get('confidence_score',0)*100:.0f}% · TTF: {ttf} · Impact: {_fmt_millions(a.get('financial_impact_usd',0))}\n"
-                f"   Action: {a.get('recommended_action','—')}\n"
-            )
-        return "\n".join(lines), ["get_open_alerts"]
-
-    # ── Intent: maintenance / overdue / scheduled
-    if any(w in q for w in ["maintenance", "overdue", "schedule", "next due", "inspection", "service", "technician", "findings"]):
-        raw = json.loads(executor.execute("get_maintenance_history", {}))
-        wo_raw = json.loads(executor.execute("get_work_orders", {}))
-        active_wo = [w for w in wo_raw if w.get("status") not in ("completed", "cancelled")]
-        lines = ["**Maintenance overview**\n"]
-        if active_wo:
-            lines.append(f"**Active work orders / cases: {len(active_wo)}**")
-            for w in active_wo[:4]:
-                lines.append(f"• [{w['type'].upper()}] **{w['asset_name']}** — {w['title']} ({w['status']}, {w['priority']} priority)")
-            lines.append("")
-        if raw:
-            lines.append(f"**Recent maintenance records: {len(raw)}**")
-            for r in raw[:5]:
-                lines.append(f"• **{r['asset_name']}** [{r['type']}] {r['date']} — {r['findings'][:80]}… Next due: {r.get('next_due','—')}")
-        return "\n".join(lines), ["get_maintenance_history", "get_work_orders"]
-
-    # ── Intent: RUL / remaining life / failure timeline
-    if any(w in q for w in ["rul", "remaining", "life", "fail", "days", "timeline", "how long", "when will"]):
-        raw = json.loads(executor.execute("get_rul_estimates", {}))
-        lines = ["**Remaining Useful Life estimates (worst first)**\n"]
-        for a in raw[:8]:
-            urgency_label = {"critical": "⚠️ CRITICAL", "high": "🔶 HIGH", "monitor": "✅ Monitor"}.get(a["urgency"], "")
-            rul_min = a.get("rul_min_days")
-            rul_max = a.get("rul_max_days")
-            rul_str = f"{rul_min}–{rul_max} days" if rul_min is not None else "N/A"
-            lines.append(
-                f"{urgency_label} **{a['name']}** (health {a['health_score']:.0f}/100)\n"
-                f"   RUL: {rul_str} · Degradation: {a['degradation_rate_pts_per_day']:.2f} pts/day\n"
-            )
-        return "\n".join(lines), ["get_rul_estimates"]
-
-    # ── Intent: sensor / abnormal readings
-    if any(w in q for w in ["sensor", "vibration", "temperature", "pressure", "reading", "abnormal", "alarm", "hi-alarm", "lo-alarm"]):
-        raw = json.loads(executor.execute("get_asset_status", {}))
-        lines = ["**Sensor status across fleet**\n"]
-        flagged = []
-        for asset in raw:
-            for s in asset.get("sensors", []):
-                val = s.get("current_value")
-                if val is None:
-                    continue
-                hi = s.get("hi_alarm")
-                lo = s.get("lo_alarm")
-                if (hi and val > hi) or (lo and val < lo):
-                    flagged.append((asset["name"], s["name"], val, s["unit"], hi, lo))
-        if flagged:
-            lines.append(f"**{len(flagged)} sensor(s) outside alarm limits:**\n")
-            for asset_name, sname, val, unit, hi, lo in flagged[:8]:
-                direction = "above hi-alarm" if hi and val > hi else "below lo-alarm"
-                lines.append(f"• **{asset_name}** — {sname}: {val:.2f} {unit} ({direction})")
-        else:
-            lines.append("No sensors currently outside their alarm limits.")
-        return "\n".join(lines), ["get_asset_status"]
-
-    # ── Intent: work orders / cases
-    if any(w in q for w in ["work order", "case", "assigned", "pending", "wo", "action"]):
-        raw = json.loads(executor.execute("get_work_orders", {}))
-        active = [w for w in raw if w.get("status") not in ("completed", "cancelled")]
-        lines = [f"**Work orders & cases: {len(raw)} total, {len(active)} active**\n"]
-        for w in active[:6]:
-            lines.append(
-                f"• [{w['type'].upper()}] **{w['asset_name']}** — {w['title']}\n"
-                f"   Status: {w['status']} · Priority: {w['priority']} · Assigned: {w.get('assigned_to') or 'Unassigned'} · Due: {w.get('target_date') or '—'}"
-            )
-        if not active:
-            lines.append("No active work orders at this time.")
-        return "\n".join(lines), ["get_work_orders"]
-
-    # ── Default: fleet health summary
-    raw = json.loads(executor.execute("compare_assets", {}))
-    alerts_raw = json.loads(executor.execute("get_open_alerts", {}))
-    fin_raw = json.loads(executor.execute("get_financial_exposure", {}))
-    lines = [
-        f"**Fleet health summary — {len(raw)} assets monitored**\n",
-        f"Open alerts: **{alerts_raw['open_alert_count']}** · Total exposure: **{_fmt_millions(fin_raw['total_exposure_usd'])}**\n",
-        "Asset health ranking (worst first):\n",
-    ]
-    for a in raw:
-        bar = "█" * int(a["health_score"] / 10) + "░" * (10 - int(a["health_score"] / 10))
-        lines.append(
-            f"• **{a['name']}** [{a['type']}] {bar} {a['health_score']:.0f}/100 — "
-            f"{a['open_alerts']} alert(s), degrading {a['degradation_rate']:.2f} pts/day"
+    for _ in range(6):  # max 6 agentic turns
+        response = client.chat.completions.create(
+            model=deployment,
+            messages=api_messages,
+            tools=TOOLS,
+            tool_choice="auto",
+            temperature=0.2,
+            max_tokens=1500,
         )
-    return "\n".join(lines), ["compare_assets", "get_open_alerts", "get_financial_exposure"]
+
+        choice = response.choices[0]
+        assistant_msg = choice.message
+
+        if not assistant_msg.tool_calls:
+            return assistant_msg.content or "", tools_used
+
+        # Append assistant turn with tool calls
+        api_messages.append(assistant_msg)
+
+        # Execute each tool call and append results
+        for tc in assistant_msg.tool_calls:
+            fn_name = tc.function.name
+            fn_args = json.loads(tc.function.arguments)
+            tools_used.append(fn_name)
+            result = executor.execute(fn_name, fn_args)
+            api_messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
+
+    # Fallback: ask for a final answer without tools
+    api_messages.append({"role": "user", "content": "Please summarise what you found."})
+    response = client.chat.completions.create(
+        model=deployment,
+        messages=api_messages,
+        temperature=0.2,
+        max_tokens=1000,
+    )
+    return response.choices[0].message.content or "", tools_used
 
 
 # ── Chat endpoint ─────────────────────────────────────────────────────────────
@@ -589,8 +561,13 @@ def mock_respond(query: str, executor: ToolExecutor) -> tuple[str, List[str]]:
 @router.post("/")
 def chat(body: ChatRequest, db: Session = Depends(get_db)):
     executor = ToolExecutor(db)
-    last_user_msg = next(
-        (m.content for m in reversed(body.messages) if m.role == "user"), ""
-    )
-    response_text, tools_used = mock_respond(last_user_msg, executor)
+    system_prompt = build_system_prompt(body.context, db)
+
+    messages = [{"role": m.role, "content": m.content} for m in body.messages]
+
+    try:
+        response_text, tools_used = run_chat(messages, system_prompt, executor)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     return {"response": response_text, "tools_used": tools_used}
